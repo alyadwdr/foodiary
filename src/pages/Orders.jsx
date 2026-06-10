@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Plus, Search, FileText, FileSpreadsheet, Pencil, Trash2, ChevronDown } from 'lucide-react'
+import { Plus, Search, FileText, FileSpreadsheet, Pencil, Trash2 } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { formatCurrency, formatDate, exportToPDF, exportToExcel } from '../lib/export'
 import Modal from '../components/Modal'
+import Select from '../components/Select'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 const FILTERS = ['Today', 'This Week', 'This Month', 'All']
 const STATUS_OPTIONS = [{ value: 'process', label: 'In Progress' }, { value: 'done', label: 'Done' }]
@@ -11,17 +13,28 @@ const PAYMENT_OPTIONS = [{ value: 'cash', label: 'Cash' }, { value: 'tf', label:
 export default function Orders() {
   const [orders, setOrders] = useState([])
   const [products, setProducts] = useState([])
+  const [openPODates, setOpenPODates] = useState([])
   const [filter, setFilter] = useState('Today')
   const [search, setSearch] = useState('')
-  const [modal, setModal] = useState(null) // null | 'add' | {id, ...}
-  const [form, setForm] = useState({ customer_name: '', product_id: '', quantity: 1, payment_method: 'cash', shipping_fee: 0, notes: '', status: 'process' })
+  const [modal, setModal] = useState(null)
+  const [confirmId, setConfirmId] = useState(null)
+  const [form, setForm] = useState({
+    customer_name: '', product_id: '', quantity: 1,
+    payment_method: 'cash', shipping_fee: 0,
+    notes: '', status: 'process', order_date: '',
+  })
   const [loading, setLoading] = useState(false)
 
-  useEffect(() => { fetchOrders(); fetchProducts() }, [filter])
+  useEffect(() => { fetchOrders(); fetchProducts(); fetchOpenPO() }, [filter])
 
   async function fetchProducts() {
     const { data } = await supabase.from('products').select('*')
     setProducts(data || [])
+  }
+
+  async function fetchOpenPO() {
+    const { data } = await supabase.from('open_po_dates').select('date').order('date', { ascending: true })
+    setOpenPODates((data || []).map(d => d.date))
   }
 
   async function fetchOrders() {
@@ -53,13 +66,25 @@ export default function Orders() {
   const totalRevenue = filtered.reduce((s, o) => s + (o.total_price || 0), 0)
 
   const selectedProduct = products.find(p => p.id === Number(form.product_id))
-  const computedTotal = selectedProduct ? selectedProduct.price * form.quantity : 0
+  const subtotal = selectedProduct ? selectedProduct.price * form.quantity : 0
+  const computedTotal = subtotal + Number(form.shipping_fee || 0)
+
+  const productOptions = products.map(p => ({
+    value: p.id,
+    label: `${p.name} — Rp ${p.price?.toLocaleString('id-ID')}`,
+  }))
+
+  const dateOptions = openPODates.map(d => ({
+    value: d,
+    label: new Date(d).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' }),
+  }))
 
   function openAdd() {
     const first = products[0]
-    setForm({ customer_name: '', product_id: first?.id || '', quantity: 1, payment_method: 'cash', shipping_fee: 0, notes: '', status: 'process' })
+    setForm({ customer_name: '', product_id: first?.id || '', quantity: 1, payment_method: 'cash', shipping_fee: 0, notes: '', status: 'process', order_date: '' })
     setModal('add')
   }
+
   function openEdit(order) {
     setForm({
       customer_name: order.customer_name,
@@ -69,6 +94,7 @@ export default function Orders() {
       shipping_fee: order.shipping_fee || 0,
       notes: order.notes || '',
       status: order.status,
+      order_date: '',
     })
     setModal(order)
   }
@@ -78,11 +104,14 @@ export default function Orders() {
       customer_name: form.customer_name,
       product_id: form.product_id,
       quantity: Number(form.quantity),
-      total_price: computedTotal + Number(form.shipping_fee),
+      total_price: computedTotal,
       payment_method: form.payment_method,
-      shipping_fee: Number(form.shipping_fee),
+      shipping_fee: Number(form.shipping_fee || 0),
       notes: form.notes,
       status: form.status,
+    }
+    if (modal === 'add' && form.order_date) {
+      payload.created_at = new Date(form.order_date).toISOString()
     }
     if (modal === 'add') await supabase.from('orders').insert(payload)
     else await supabase.from('orders').update(payload).eq('id', modal.id)
@@ -90,9 +119,9 @@ export default function Orders() {
     fetchOrders()
   }
 
-  async function handleDelete(id) {
-    if (!confirm('Delete this order?')) return
-    await supabase.from('orders').delete().eq('id', id)
+  async function handleDelete() {
+    await supabase.from('orders').delete().eq('id', confirmId)
+    setConfirmId(null)
     fetchOrders()
   }
 
@@ -100,24 +129,16 @@ export default function Orders() {
     exportToPDF(
       `Orders — ${filter}`,
       [
-        { header: '#', key: 'no' },
-        { header: 'Date', key: 'date' },
-        { header: 'Customer', key: 'customer_name' },
-        { header: 'Qty', key: 'quantity' },
-        { header: 'Total', key: 'total' },
-        { header: 'Payment', key: 'payment_method' },
-        { header: 'Shipping', key: 'shipping' },
-        { header: 'Status', key: 'status' },
+        { header: '#', key: 'no' }, { header: 'Date', key: 'date' },
+        { header: 'Customer', key: 'customer_name' }, { header: 'Qty', key: 'quantity' },
+        { header: 'Total', key: 'total' }, { header: 'Payment', key: 'payment_method' },
+        { header: 'Shipping', key: 'shipping' }, { header: 'Status', key: 'status' },
       ],
       filtered.map((o, i) => ({
-        no: i + 1,
-        date: formatDate(o.created_at),
-        customer_name: o.customer_name,
-        quantity: o.quantity,
-        total: formatCurrency(o.total_price),
+        no: i + 1, date: formatDate(o.created_at), customer_name: o.customer_name,
+        quantity: o.quantity, total: formatCurrency(o.total_price),
         payment_method: o.payment_method?.toUpperCase(),
-        shipping: formatCurrency(o.shipping_fee),
-        status: o.status,
+        shipping: formatCurrency(o.shipping_fee), status: o.status,
       })),
       `orders_${filter.toLowerCase().replace(/ /g, '_')}`
     )
@@ -127,26 +148,16 @@ export default function Orders() {
     exportToExcel(
       'Orders',
       [
-        { header: '#', key: 'no' },
-        { header: 'Date', key: 'date' },
-        { header: 'Customer', key: 'customer_name' },
-        { header: 'Qty', key: 'quantity' },
-        { header: 'Total', key: 'total' },
-        { header: 'Payment', key: 'payment_method' },
-        { header: 'Shipping', key: 'shipping' },
-        { header: 'Notes', key: 'notes' },
+        { header: '#', key: 'no' }, { header: 'Date', key: 'date' },
+        { header: 'Customer', key: 'customer_name' }, { header: 'Qty', key: 'quantity' },
+        { header: 'Total', key: 'total' }, { header: 'Payment', key: 'payment_method' },
+        { header: 'Shipping', key: 'shipping' }, { header: 'Notes', key: 'notes' },
         { header: 'Status', key: 'status' },
       ],
       filtered.map((o, i) => ({
-        no: i + 1,
-        date: formatDate(o.created_at),
-        customer_name: o.customer_name,
-        quantity: o.quantity,
-        total: o.total_price,
-        payment_method: o.payment_method,
-        shipping: o.shipping_fee,
-        notes: o.notes,
-        status: o.status,
+        no: i + 1, date: formatDate(o.created_at), customer_name: o.customer_name,
+        quantity: o.quantity, total: o.total_price, payment_method: o.payment_method,
+        shipping: o.shipping_fee, notes: o.notes, status: o.status,
       })),
       `orders_${filter.toLowerCase().replace(/ /g, '_')}`
     )
@@ -172,7 +183,6 @@ export default function Orders() {
       </div>
 
       <div className="card space-y-4">
-        {/* Filters + search */}
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="flex bg-cream-lighter rounded-full p-0.5 self-start">
             {FILTERS.map(f => (
@@ -185,7 +195,6 @@ export default function Orders() {
           </div>
         </div>
 
-        {/* Table */}
         <div className="overflow-x-auto -mx-6 px-6">
           <table className="w-full min-w-[700px]">
             <thead>
@@ -229,7 +238,7 @@ export default function Orders() {
                       <button onClick={() => openEdit(order)} className="w-7 h-7 flex items-center justify-center rounded-xl hover:bg-cream transition-colors">
                         <Pencil size={13} className="text-cocoa/60" />
                       </button>
-                      <button onClick={() => handleDelete(order.id)} className="w-7 h-7 flex items-center justify-center rounded-xl hover:bg-red-50 transition-colors">
+                      <button onClick={() => setConfirmId(order.id)} className="w-7 h-7 flex items-center justify-center rounded-xl hover:bg-red-50 transition-colors">
                         <Trash2 size={13} className="text-red-400" />
                       </button>
                     </div>
@@ -240,7 +249,6 @@ export default function Orders() {
           </table>
         </div>
 
-        {/* Summary */}
         <div className="flex flex-wrap gap-4 pt-3 border-t border-cream/60">
           <div className="bg-cream-lighter rounded-2xl px-4 py-2.5">
             <p className="text-xs text-cocoa/60">Total Orders</p>
@@ -262,14 +270,31 @@ export default function Orders() {
         <div className="space-y-4">
           <div>
             <label className="text-xs font-semibold text-cocoa/60 mb-1.5 block">Customer Name</label>
-            <input className="input-field" placeholder="Customer name" value={form.customer_name} onChange={e => set('customer_name', e.target.value)} />
+            <input className="input-field" placeholder="Nama customer" value={form.customer_name} onChange={e => set('customer_name', e.target.value)} />
           </div>
+
+          {modal === 'add' && (
+            <div>
+              <label className="text-xs font-semibold text-cocoa/60 mb-1.5 block">Tanggal Open PO</label>
+              <Select
+                value={form.order_date}
+                onChange={v => set('order_date', v)}
+                options={dateOptions}
+                placeholder="Pilih tanggal open PO (opsional)"
+              />
+            </div>
+          )}
+
           <div>
             <label className="text-xs font-semibold text-cocoa/60 mb-1.5 block">Product</label>
-            <select className="input-field" value={form.product_id} onChange={e => set('product_id', e.target.value)}>
-              {products.map(p => <option key={p.id} value={p.id}>{p.name} — Rp {p.price?.toLocaleString('id-ID')}</option>)}
-            </select>
+            <Select
+              value={form.product_id}
+              onChange={v => set('product_id', v)}
+              options={productOptions}
+              placeholder="Pilih produk"
+            />
           </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-semibold text-cocoa/60 mb-1.5 block">Quantity</label>
@@ -280,38 +305,57 @@ export default function Orders() {
               <input className="input-field" type="number" min="0" value={form.shipping_fee} onChange={e => set('shipping_fee', e.target.value)} />
             </div>
           </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-semibold text-cocoa/60 mb-1.5 block">Payment</label>
-              <select className="input-field" value={form.payment_method} onChange={e => set('payment_method', e.target.value)}>
-                {PAYMENT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+              <Select value={form.payment_method} onChange={v => set('payment_method', v)} options={PAYMENT_OPTIONS} />
             </div>
             <div>
               <label className="text-xs font-semibold text-cocoa/60 mb-1.5 block">Status</label>
-              <select className="input-field" value={form.status} onChange={e => set('status', e.target.value)}>
-                {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+              <Select value={form.status} onChange={v => set('status', v)} options={STATUS_OPTIONS} />
             </div>
           </div>
+
           <div>
             <label className="text-xs font-semibold text-cocoa/60 mb-1.5 block">Notes</label>
-            <input className="input-field" placeholder="Optional" value={form.notes} onChange={e => set('notes', e.target.value)} />
+            <input className="input-field" placeholder="Opsional" value={form.notes} onChange={e => set('notes', e.target.value)} />
           </div>
+
           {selectedProduct && (
-            <div className="bg-cream-lighter rounded-2xl p-3">
-              <p className="text-xs text-cocoa/60">Subtotal (excl. shipping)</p>
-              <p className="font-bold text-burgundy">{formatCurrency(computedTotal)}</p>
+            <div className="bg-cream-lighter rounded-2xl p-4 space-y-1.5">
+              <div className="flex justify-between text-xs text-cocoa/60">
+                <span>Subtotal (excl. shipping)</span>
+                <span>{formatCurrency(subtotal)}</span>
+              </div>
+              {Number(form.shipping_fee) > 0 && (
+                <div className="flex justify-between text-xs text-cocoa/60">
+                  <span>Shipping</span>
+                  <span>{formatCurrency(Number(form.shipping_fee))}</span>
+                </div>
+              )}
+              <div className="flex justify-between pt-1.5 border-t border-cream">
+                <span className="text-xs font-semibold text-cocoa">Total</span>
+                <span className="text-base font-bold text-burgundy">{formatCurrency(computedTotal)}</span>
+              </div>
             </div>
           )}
         </div>
         <div className="flex gap-3 mt-6">
-          <button onClick={() => setModal(null)} className="btn-secondary flex-1">Cancel</button>
-          <button onClick={handleSave} className="btn-primary flex-1">Save</button>
+          <button onClick={() => setModal(null)} className="btn-secondary flex-1">Batal</button>
+          <button onClick={handleSave} className="btn-primary flex-1">Simpan</button>
         </div>
       </Modal>
 
-      {/* FAB */}
+      {/* Confirm Delete */}
+      <ConfirmDialog
+        open={!!confirmId}
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmId(null)}
+        title="Hapus Order?"
+        message="Data order ini akan dihapus permanen dan tidak bisa dikembalikan."
+      />
+
       <button onClick={openAdd} className="fab">
         <Plus size={24} />
       </button>
