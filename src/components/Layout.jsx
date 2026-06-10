@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Outlet } from 'react-router-dom'
 import {
   LayoutDashboard, ShoppingBag, Receipt, BarChart3, Package,
-  Menu, X, ChefHat
+  Menu, ChefHat
 } from 'lucide-react'
 
 const navItems = [
@@ -17,7 +17,7 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   return (
-    <div className="min-h-screen flex bg-cream-lighter">
+    <div className="flex min-h-screen bg-cream-lighter">
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -28,9 +28,9 @@ export default function Layout() {
 
       {/* Sidebar */}
       <aside className={`
-        fixed top-0 left-0 h-full w-64 bg-olive flex flex-col z-40 transition-transform duration-300
+        fixed top-0 left-0 h-screen w-64 bg-olive flex flex-col z-40 transition-transform duration-300
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-        lg:translate-x-0 lg:static lg:z-auto
+        lg:translate-x-0 lg:sticky lg:shrink-0
       `}>
         {/* Logo */}
         <div className="flex items-center gap-3 px-6 py-6 border-b border-white/10">
@@ -71,7 +71,7 @@ export default function Layout() {
       </aside>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-screen">
         {/* Top bar (mobile) */}
         <header className="lg:hidden flex items-center justify-between px-4 py-4 bg-white/80 backdrop-blur border-b border-cream/60 sticky top-0 z-20">
           <div className="flex items-center gap-2">
