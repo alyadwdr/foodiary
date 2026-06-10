@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, TrendingUp, ShoppingBag, ChevronLeft, ChevronRight, ToggleLeft, ToggleRight } from 'lucide-react'
+import { Plus, TrendingUp, ShoppingBag, Receipt, ChevronLeft, ChevronRight } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { supabase } from '../lib/supabase'
 import { formatCurrency, formatDate } from '../lib/export'
