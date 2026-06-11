@@ -5,7 +5,7 @@ import { formatCurrency, formatDate, exportToPDF, exportToExcel } from '../lib/e
 import Modal from '../components/Modal'
 import ConfirmDialog from '../components/ConfirmDialog'
 
-const FILTERS = ['Today', 'This Month', 'This Year', 'All']
+const FILTERS = ['All', 'Today', 'This Month', 'This Year']
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const DAYS_SHORT = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 
@@ -40,7 +40,7 @@ function DatePickerCalendar({ value, onChange, label }) {
 
   return (
     <div className="relative">
-      <label className="text-xs font-semibold text-cocoa/60 mb-1.5 block">{label}</label>
+      {label && <label className="text-xs font-semibold text-cocoa/60 mb-1.5 block">{label}</label>}
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
@@ -55,23 +55,21 @@ function DatePickerCalendar({ value, onChange, label }) {
         <button
           type="button"
           onClick={() => onChange('')}
-          className="absolute right-10 top-[38px] text-cocoa/40 hover:text-cocoa text-xs px-1"
+          className="absolute right-10 top-1/2 -translate-y-1/2 text-cocoa/40 hover:text-cocoa text-xs px-1"
+          style={{ top: label ? 'calc(50% + 10px)' : '50%' }}
         >✕</button>
       )}
 
       {open && (
         <div className="absolute z-50 mt-1.5 bg-white rounded-2xl shadow-float border border-cream/60 p-3 w-64">
-          {/* Month navigation */}
           <div className="flex items-center justify-between mb-2">
             <button onClick={prevMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-cream-lighter text-cocoa/60">‹</button>
             <span className="text-xs font-semibold text-olive">{MONTHS_SHORT[calMonth]} {calYear}</span>
             <button onClick={nextMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-cream-lighter text-cocoa/60">›</button>
           </div>
-          {/* Day headers */}
           <div className="grid grid-cols-7 mb-1">
             {DAYS_SHORT.map(d => <div key={d} className="text-center text-[10px] text-cocoa/40 font-medium py-0.5">{d}</div>)}
           </div>
-          {/* Days */}
           <div className="grid grid-cols-7 gap-0.5">
             {Array.from({ length: firstDay }).map((_, i) => <div key={`e-${i}`} />)}
             {Array.from({ length: daysInMonth }).map((_, i) => {
@@ -150,7 +148,7 @@ export default function Expenses() {
       price: Number(form.price),
       notes: form.notes,
     }
-    if (modal === 'add' && form.expense_date) {
+    if (form.expense_date) {
       payload.created_at = new Date(form.expense_date + 'T12:00:00').toISOString()
     }
     if (modal === 'add') await supabase.from('expenses').insert(payload)
@@ -217,7 +215,6 @@ export default function Expenses() {
       </div>
 
       <div className="card space-y-4">
-        {/* Filters + search + total inline */}
         <div className="flex flex-col gap-3">
           <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
             <div className="flex bg-cream-lighter rounded-full p-0.5 self-start flex-shrink-0">
@@ -229,7 +226,6 @@ export default function Expenses() {
               <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-cocoa/40" />
               <input className="input-field !pl-9" placeholder="Search expense..." value={search} onChange={e => setSearch(e.target.value)} />
             </div>
-            {/* Total inline */}
             <div className="flex gap-2 sm:ml-auto">
               <div className="bg-cream-lighter rounded-xl px-3 py-1.5">
                 <p className="text-xs text-cocoa/60">Items</p>
@@ -294,13 +290,11 @@ export default function Expenses() {
             <input className="input-field" placeholder="e.g. Tepung Takoyaki" value={form.name} onChange={e => set('name', e.target.value)} />
           </div>
 
-          {modal === 'add' && (
-            <DatePickerCalendar
-              label="Tanggal Pengeluaran"
-              value={form.expense_date}
-              onChange={v => set('expense_date', v)}
-            />
-          )}
+          <DatePickerCalendar
+            label={modal === 'add' ? 'Tanggal Pengeluaran' : 'Ubah Tanggal Pengeluaran'}
+            value={form.expense_date}
+            onChange={v => set('expense_date', v)}
+          />
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -324,7 +318,6 @@ export default function Expenses() {
         </div>
       </Modal>
 
-      {/* Confirm Delete */}
       <ConfirmDialog
         open={!!confirmId}
         onConfirm={handleDelete}

@@ -66,7 +66,7 @@ export default function Layout() {
 
         {/* Bottom branding */}
         <div className="px-6 py-4 border-t border-white/10">
-          <p className="text-xs text-cream/30 text-center">© 2025 Foodiary</p>
+          <p className="text-xs text-cream/30 text-center">© 2026 Foodiary</p>
         </div>
       </aside>
 

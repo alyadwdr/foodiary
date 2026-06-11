@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Plus, TrendingUp, ShoppingBag, Receipt, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, TrendingUp, ShoppingBag, Receipt, ChevronLeft, ChevronRight, Calendar } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer
@@ -12,29 +12,59 @@ import AddTransactionModal from '../components/AddTransactionModal'
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-// Custom animated line that goes from flat to actual data
-function AnimatedLine({ data, ...props }) {
-  const [displayData, setDisplayData] = useState(() => data.map(d => ({ ...d, revenue: 0 })))
-  const animRef = useRef(null)
+// Smooth animated line chart using CSS transition approach
+function AnimatedLine({ data }) {
+  const prevDataRef = useRef([])
+  const [displayData, setDisplayData] = useState([])
+  const rafRef = useRef(null)
   const startRef = useRef(null)
-  const DURATION = 800
+  const fromRef = useRef([])
+  const toRef = useRef([])
+  const DURATION = 900
 
   useEffect(() => {
     if (!data || data.length === 0) return
-    if (animRef.current) cancelAnimationFrame(animRef.current)
+
+    // Cancel any in-progress animation
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+
+    // Start from previous display values (or zero if first render)
+    const from = data.map((d, i) => ({
+      ...d,
+      revenue: (prevDataRef.current[i]?.revenue) ?? 0,
+    }))
+    fromRef.current = from
+    toRef.current = data
     startRef.current = null
+
+    function easeOutCubic(t) {
+      return 1 - Math.pow(1 - t, 3)
+    }
 
     function animate(ts) {
       if (!startRef.current) startRef.current = ts
-      const progress = Math.min((ts - startRef.current) / DURATION, 1)
-      // ease out cubic
-      const eased = 1 - Math.pow(1 - progress, 3)
-      setDisplayData(data.map(d => ({ ...d, revenue: d.revenue * eased })))
-      if (progress < 1) animRef.current = requestAnimationFrame(animate)
+      const elapsed = ts - startRef.current
+      const raw = Math.min(elapsed / DURATION, 1)
+      const progress = easeOutCubic(raw)
+
+      const next = toRef.current.map((d, i) => ({
+        ...d,
+        revenue: (fromRef.current[i]?.revenue ?? 0) + (d.revenue - (fromRef.current[i]?.revenue ?? 0)) * progress,
+      }))
+      setDisplayData(next)
+
+      if (raw < 1) {
+        rafRef.current = requestAnimationFrame(animate)
+      } else {
+        prevDataRef.current = data
+      }
     }
-    animRef.current = requestAnimationFrame(animate)
-    return () => { if (animRef.current) cancelAnimationFrame(animRef.current) }
+
+    rafRef.current = requestAnimationFrame(animate)
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
   }, [data])
+
+  if (!displayData.length) return null
 
   return (
     <ResponsiveContainer width="100%" height={200}>
@@ -72,39 +102,14 @@ export default function Dashboard() {
   const [fabOpen, setFabOpen] = useState(false)
   const [addModal, setAddModal] = useState(null)
   const [loading, setLoading] = useState(true)
-  // PO confirmation popup
-  const [poConfirm, setPoConfirm] = useState(null) // { dateStr, isOpen }
+  const [poConfirm, setPoConfirm] = useState(null)
 
-  useEffect(() => { fetchData() }, [])
+  useEffect(() => { fetchData('month') }, [])
 
-  async function fetchData() {
+  async function fetchData(view) {
     setLoading(true)
     const now = new Date()
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString()
 
-    const [ordersRes, recentRes, poRes] = await Promise.all([
-      supabase.from('orders').select('total_price, shipping_fee, quantity, created_at').gte('created_at', monthStart).lte('created_at', monthEnd),
-      supabase.from('orders').select('id, customer_name, quantity, total_price, created_at, status').order('created_at', { ascending: false }).limit(5),
-      supabase.from('open_po_dates').select('date'),
-    ])
-
-    const orders = ordersRes.data || []
-    const revenue = orders.reduce((s, o) => s + (o.total_price - (o.shipping_fee || 0)), 0)
-    // stat = total pcs bought, not order count
-    const totalPcs = orders.reduce((s, o) => s + (o.quantity || 0), 0)
-    setStats({ orders: totalPcs, revenue })
-    setRecentOrders(recentRes.data || [])
-
-    const poDates = (poRes.data || []).map(d => d.date)
-    setOpenPODates(poDates)
-
-    buildChartData(orders, 'month', now)
-    setLoading(false)
-  }
-
-  async function fetchChartData(view) {
-    const now = new Date()
     let start, end
     if (view === 'month') {
       start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
@@ -113,8 +118,24 @@ export default function Dashboard() {
       start = new Date(now.getFullYear(), 0, 1).toISOString()
       end = new Date(now.getFullYear(), 11, 31, 23, 59, 59).toISOString()
     }
-    const { data } = await supabase.from('orders').select('total_price, shipping_fee, created_at').gte('created_at', start).lte('created_at', end)
-    buildChartData(data || [], view, now)
+
+    const [ordersRes, recentRes, poRes] = await Promise.all([
+      supabase.from('orders').select('total_price, shipping_fee, quantity, created_at').gte('created_at', start).lte('created_at', end),
+      supabase.from('orders').select('id, customer_name, quantity, total_price, created_at, status').order('created_at', { ascending: false }).limit(5),
+      supabase.from('open_po_dates').select('date'),
+    ])
+
+    const orders = ordersRes.data || []
+    const revenue = orders.reduce((s, o) => s + (o.total_price - (o.shipping_fee || 0)), 0)
+    const totalPcs = orders.reduce((s, o) => s + (o.quantity || 0), 0)
+    setStats({ orders: totalPcs, revenue })
+    setRecentOrders(recentRes.data || [])
+
+    const poDates = (poRes.data || []).map(d => d.date)
+    setOpenPODates(poDates)
+
+    buildChartData(orders, view, now)
+    setLoading(false)
   }
 
   function buildChartData(orders, view, now) {
@@ -140,7 +161,7 @@ export default function Dashboard() {
 
   function handleChartView(v) {
     setChartView(v)
-    fetchChartData(v)
+    fetchData(v)
   }
 
   // Calendar helpers
@@ -189,7 +210,9 @@ export default function Dashboard() {
         <div className="card">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-xs text-cocoa/60 font-medium uppercase tracking-wider">Pcs Sold This Month</p>
+              <p className="text-xs text-cocoa/60 font-medium uppercase tracking-wider">
+                Pcs Sold {chartView === 'month' ? 'This Month' : 'This Year'}
+              </p>
               <p className="text-3xl font-bold text-olive mt-2">{stats.orders}</p>
               <p className="text-xs text-cocoa/50 mt-1">pcs</p>
             </div>
@@ -201,7 +224,9 @@ export default function Dashboard() {
         <div className="card bg-burgundy">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-xs text-cream/60 font-medium uppercase tracking-wider">Revenue This Month</p>
+              <p className="text-xs text-cream/60 font-medium uppercase tracking-wider">
+                Revenue {chartView === 'month' ? 'This Month' : 'This Year'}
+              </p>
               <p className="text-xl lg:text-2xl font-bold text-cream-lighter mt-2">{formatCurrency(stats.revenue)}</p>
               <p className="text-xs text-cream/50 mt-1">excl. shipping</p>
             </div>
@@ -319,7 +344,7 @@ export default function Dashboard() {
       {addModal && (
         <AddTransactionModal
           type={addModal}
-          onClose={() => { setAddModal(null); fetchData() }}
+          onClose={() => { setAddModal(null); fetchData(chartView) }}
         />
       )}
 
@@ -330,7 +355,7 @@ export default function Dashboard() {
           <div className="relative w-full max-w-sm bg-white rounded-3xl shadow-float">
             <div className="px-6 pt-6 pb-5">
               <div className="w-12 h-12 bg-burgundy/10 rounded-2xl flex items-center justify-center mb-4">
-                <span className="text-2xl">📅</span>
+                <Calendar size={22} className="text-burgundy" />
               </div>
               <h3 className="font-bold text-olive text-base">
                 {poConfirm.isOpen ? 'Tutup Open PO?' : 'Buka Open PO?'}
