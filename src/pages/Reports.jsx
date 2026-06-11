@@ -2,13 +2,143 @@ import { useState, useEffect } from 'react'
 import { FileText, FileSpreadsheet, TrendingUp, TrendingDown, Wallet } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { supabase } from '../lib/supabase'
-import { formatCurrency, exportToPDF, exportToExcel } from '../lib/export'
+import { formatCurrency, formatDate, exportToPDF, exportToExcel } from '../lib/export'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
+import * as XLSX from 'xlsx'
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const now = new Date()
 
+function exportFullPDF(periodLabel, orderRows, expenseRows, summary) {
+  const doc = new jsPDF()
+  doc.setFontSize(16)
+  doc.setTextColor(64, 1, 6)
+  doc.text(`Financial Report — ${periodLabel}`, 14, 18)
+  doc.setFontSize(9)
+  doc.setTextColor(100)
+  doc.text(`Generated: ${new Date().toLocaleDateString('en-GB')}`, 14, 25)
+
+  // Summary section
+  doc.setFontSize(11)
+  doc.setTextColor(13, 12, 0)
+  doc.text('Summary', 14, 34)
+  autoTable(doc, {
+    startY: 38,
+    head: [['Metric', 'Value']],
+    body: [
+      ['Period', periodLabel],
+      ['Total Revenue (excl. shipping)', formatCurrency(summary.revenue)],
+      ['Total Expenses', formatCurrency(summary.expenses)],
+      ['Net Profit', formatCurrency(summary.profit)],
+    ],
+    headStyles: { fillColor: [64, 1, 6], textColor: [217, 185, 145], fontSize: 8, fontStyle: 'bold' },
+    bodyStyles: { fontSize: 8, textColor: [13, 12, 0] },
+    alternateRowStyles: { fillColor: [247, 240, 230] },
+    styles: { cellPadding: 4 },
+  })
+
+  // Orders section
+  const summaryEnd = doc.lastAutoTable.finalY + 10
+  doc.setFontSize(11)
+  doc.setTextColor(13, 12, 0)
+  doc.text('Orders Detail', 14, summaryEnd)
+  autoTable(doc, {
+    startY: summaryEnd + 4,
+    head: [['#', 'Date', 'Customer', 'Qty', 'Revenue', 'Shipping', 'Payment', 'Status', 'Notes']],
+    body: orderRows.map((o, i) => [
+      i + 1,
+      formatDate(o.created_at),
+      o.customer_name,
+      o.quantity,
+      formatCurrency(o.total_price - (o.shipping_fee || 0)),
+      formatCurrency(o.shipping_fee || 0),
+      o.payment_method?.toUpperCase() || '-',
+      o.status === 'done' ? 'Done' : 'In Progress',
+      o.notes || '-',
+    ]),
+    headStyles: { fillColor: [64, 1, 6], textColor: [217, 185, 145], fontSize: 7, fontStyle: 'bold' },
+    bodyStyles: { fontSize: 7, textColor: [13, 12, 0] },
+    alternateRowStyles: { fillColor: [247, 240, 230] },
+    styles: { cellPadding: 3 },
+  })
+
+  // Expenses section
+  const ordersEnd = doc.lastAutoTable.finalY + 10
+  doc.setFontSize(11)
+  doc.setTextColor(13, 12, 0)
+  doc.text('Expenses Detail', 14, ordersEnd)
+  autoTable(doc, {
+    startY: ordersEnd + 4,
+    head: [['#', 'Date', 'Item', 'Qty', 'Price', 'Notes']],
+    body: expenseRows.map((e, i) => [
+      i + 1,
+      formatDate(e.created_at),
+      e.name,
+      e.amount,
+      formatCurrency(e.price),
+      e.notes || '-',
+    ]),
+    headStyles: { fillColor: [64, 1, 6], textColor: [217, 185, 145], fontSize: 7, fontStyle: 'bold' },
+    bodyStyles: { fontSize: 7, textColor: [13, 12, 0] },
+    alternateRowStyles: { fillColor: [247, 240, 230] },
+    styles: { cellPadding: 3 },
+  })
+
+  doc.save(`report_${periodLabel.replace(/ /g, '_')}.pdf`)
+}
+
+function exportFullExcel(periodLabel, orderRows, expenseRows, summary) {
+  const wb = XLSX.utils.book_new()
+
+  // Sheet 1: Summary
+  const summaryData = [
+    ['Financial Report — ' + periodLabel],
+    [],
+    ['Metric', 'Value'],
+    ['Period', periodLabel],
+    ['Total Revenue (excl. shipping)', summary.revenue],
+    ['Total Expenses', summary.expenses],
+    ['Net Profit', summary.profit],
+  ]
+  const ws1 = XLSX.utils.aoa_to_sheet(summaryData)
+  XLSX.utils.book_append_sheet(wb, ws1, 'Summary')
+
+  // Sheet 2: Orders
+  const orderHeader = ['#', 'Date', 'Customer', 'Qty', 'Revenue (excl. shipping)', 'Shipping', 'Total', 'Payment', 'Status', 'Notes']
+  const orderData = orderRows.map((o, i) => [
+    i + 1,
+    formatDate(o.created_at),
+    o.customer_name,
+    o.quantity,
+    o.total_price - (o.shipping_fee || 0),
+    o.shipping_fee || 0,
+    o.total_price,
+    o.payment_method?.toUpperCase() || '-',
+    o.status === 'done' ? 'Done' : 'In Progress',
+    o.notes || '',
+  ])
+  const ws2 = XLSX.utils.aoa_to_sheet([orderHeader, ...orderData])
+  XLSX.utils.book_append_sheet(wb, ws2, 'Orders')
+
+  // Sheet 3: Expenses
+  const expenseHeader = ['#', 'Date', 'Item', 'Qty', 'Price', 'Notes']
+  const expenseData = expenseRows.map((e, i) => [
+    i + 1,
+    formatDate(e.created_at),
+    e.name,
+    e.amount,
+    e.price,
+    e.notes || '',
+  ])
+  const ws3 = XLSX.utils.aoa_to_sheet([expenseHeader, ...expenseData])
+  XLSX.utils.book_append_sheet(wb, ws3, 'Expenses')
+
+  XLSX.writeFile(wb, `report_${periodLabel.replace(/ /g, '_')}.xlsx`)
+}
+
 export default function Reports() {
-  const [viewMode, setViewMode] = useState('monthly') // 'monthly' | 'yearly'
+  const [viewMode, setViewMode] = useState('monthly')
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth())
   const [selectedYear, setSelectedYear] = useState(now.getFullYear())
   const [data, setData] = useState({ revenue: 0, expenses: 0, profit: 0 })
@@ -31,8 +161,8 @@ export default function Reports() {
     }
 
     const [ordersRes, expensesRes] = await Promise.all([
-      supabase.from('orders').select('*').gte('created_at', start).lte('created_at', end),
-      supabase.from('expenses').select('*').gte('created_at', start).lte('created_at', end),
+      supabase.from('orders').select('*').gte('created_at', start).lte('created_at', end).order('created_at', { ascending: false }),
+      supabase.from('expenses').select('*').gte('created_at', start).lte('created_at', end).order('created_at', { ascending: false }),
     ])
 
     const orders = ordersRes.data || []
@@ -44,7 +174,6 @@ export default function Reports() {
     setOrderRows(orders)
     setExpenseRows(expenses)
 
-    // Build monthly breakdown for yearly view
     if (viewMode === 'yearly') {
       const monthMap = {}
       MONTHS.forEach((m, i) => { monthMap[i] = { name: m, revenue: 0, expenses: 0 } })
@@ -58,7 +187,6 @@ export default function Reports() {
       })
       setChartData(Object.values(monthMap))
     } else {
-      // Weekly breakdown for monthly view
       const daysInMonth = new Date(selectedYear, selectedMonth + 1, 0).getDate()
       const weeks = Math.ceil(daysInMonth / 7)
       const weekMap = Array.from({ length: weeks }, (_, i) => ({ name: `W${i + 1}`, revenue: 0, expenses: 0 }))
@@ -79,43 +207,6 @@ export default function Reports() {
 
   const periodLabel = viewMode === 'monthly' ? `${MONTHS[selectedMonth]} ${selectedYear}` : `Year ${selectedYear}`
 
-  function handleExportPDF() {
-    const cols = [
-      { header: 'Metric', key: 'metric' },
-      { header: 'Value', key: 'value' },
-    ]
-    const rows = [
-      { metric: 'Period', value: periodLabel },
-      { metric: 'Total Revenue', value: formatCurrency(data.revenue) },
-      { metric: 'Total Expenses', value: formatCurrency(data.expenses) },
-      { metric: 'Net Profit', value: formatCurrency(data.profit) },
-    ]
-    exportToPDF(`Financial Report — ${periodLabel}`, cols, rows, `report_${periodLabel.replace(/ /g, '_')}`)
-  }
-
-  function handleExportExcel() {
-    const orderCols = [
-      { header: 'Date', key: 'date' }, { header: 'Customer', key: 'c' },
-      { header: 'Qty', key: 'q' }, { header: 'Revenue', key: 'r' }, { header: 'Shipping', key: 's' }
-    ]
-    const expCols = [
-      { header: 'Date', key: 'date' }, { header: 'Item', key: 'n' },
-      { header: 'Qty', key: 'a' }, { header: 'Price', key: 'p' }
-    ]
-    // Export summary sheet
-    exportToExcel(
-      'Summary',
-      [{ header: 'Metric', key: 'm' }, { header: 'Value', key: 'v' }],
-      [
-        { m: 'Period', v: periodLabel },
-        { m: 'Total Revenue', v: data.revenue },
-        { m: 'Total Expenses', v: data.expenses },
-        { m: 'Net Profit', v: data.profit },
-      ],
-      `report_${periodLabel.replace(/ /g, '_')}`
-    )
-  }
-
   const years = Array.from({ length: 5 }, (_, i) => now.getFullYear() - i)
 
   return (
@@ -126,10 +217,16 @@ export default function Reports() {
           <p className="text-sm text-cocoa/60 mt-0.5">Financial summary & analytics</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={handleExportPDF} className="btn-secondary flex items-center gap-1.5 !px-3 !py-2">
+          <button
+            onClick={() => exportFullPDF(periodLabel, orderRows, expenseRows, data)}
+            className="btn-secondary flex items-center gap-1.5 !px-3 !py-2"
+          >
             <FileText size={14} /> <span className="hidden sm:inline">PDF</span>
           </button>
-          <button onClick={handleExportExcel} className="btn-secondary flex items-center gap-1.5 !px-3 !py-2">
+          <button
+            onClick={() => exportFullExcel(periodLabel, orderRows, expenseRows, data)}
+            className="btn-secondary flex items-center gap-1.5 !px-3 !py-2"
+          >
             <FileSpreadsheet size={14} /> <span className="hidden sm:inline">Excel</span>
           </button>
         </div>
@@ -215,7 +312,7 @@ export default function Reports() {
       {/* Detail tables */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="card">
-          <h3 className="font-semibold text-olive mb-4">Orders Detail</h3>
+          <h3 className="font-semibold text-olive mb-4">Orders Detail <span className="text-xs font-normal text-cocoa/50">({orderRows.length} orders)</span></h3>
           <div className="overflow-x-auto -mx-6 px-6">
             <table className="w-full min-w-[400px]">
               <thead>
@@ -229,7 +326,7 @@ export default function Reports() {
               <tbody>
                 {orderRows.length === 0 ? (
                   <tr><td colSpan={4} className="text-center py-6 text-cocoa/40 text-sm">No orders</td></tr>
-                ) : orderRows.slice(0, 10).map(o => (
+                ) : orderRows.map(o => (
                   <tr key={o.id} className="table-row">
                     <td className="table-cell font-medium text-olive">{o.customer_name}</td>
                     <td className="table-cell">{o.quantity}</td>
@@ -243,11 +340,10 @@ export default function Reports() {
                 ))}
               </tbody>
             </table>
-            {orderRows.length > 10 && <p className="text-xs text-cocoa/40 text-center mt-2">+{orderRows.length - 10} more orders</p>}
           </div>
         </div>
         <div className="card">
-          <h3 className="font-semibold text-olive mb-4">Expenses Detail</h3>
+          <h3 className="font-semibold text-olive mb-4">Expenses Detail <span className="text-xs font-normal text-cocoa/50">({expenseRows.length} items)</span></h3>
           <div className="overflow-x-auto -mx-6 px-6">
             <table className="w-full min-w-[300px]">
               <thead>
@@ -260,7 +356,7 @@ export default function Reports() {
               <tbody>
                 {expenseRows.length === 0 ? (
                   <tr><td colSpan={3} className="text-center py-6 text-cocoa/40 text-sm">No expenses</td></tr>
-                ) : expenseRows.slice(0, 10).map(e => (
+                ) : expenseRows.map(e => (
                   <tr key={e.id} className="table-row">
                     <td className="table-cell font-medium text-olive">{e.name}</td>
                     <td className="table-cell">{e.amount}</td>
@@ -269,7 +365,6 @@ export default function Reports() {
                 ))}
               </tbody>
             </table>
-            {expenseRows.length > 10 && <p className="text-xs text-cocoa/40 text-center mt-2">+{expenseRows.length - 10} more expenses</p>}
           </div>
         </div>
       </div>

@@ -1,6 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Plus, TrendingUp, ShoppingBag, Receipt, ChevronLeft, ChevronRight } from 'lucide-react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer
+} from 'recharts'
 import { supabase } from '../lib/supabase'
 import { formatCurrency, formatDate } from '../lib/export'
 import Modal from '../components/Modal'
@@ -9,18 +12,68 @@ import AddTransactionModal from '../components/AddTransactionModal'
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
+// Custom animated line that goes from flat to actual data
+function AnimatedLine({ data, ...props }) {
+  const [displayData, setDisplayData] = useState(() => data.map(d => ({ ...d, revenue: 0 })))
+  const animRef = useRef(null)
+  const startRef = useRef(null)
+  const DURATION = 800
+
+  useEffect(() => {
+    if (!data || data.length === 0) return
+    if (animRef.current) cancelAnimationFrame(animRef.current)
+    startRef.current = null
+
+    function animate(ts) {
+      if (!startRef.current) startRef.current = ts
+      const progress = Math.min((ts - startRef.current) / DURATION, 1)
+      // ease out cubic
+      const eased = 1 - Math.pow(1 - progress, 3)
+      setDisplayData(data.map(d => ({ ...d, revenue: d.revenue * eased })))
+      if (progress < 1) animRef.current = requestAnimationFrame(animate)
+    }
+    animRef.current = requestAnimationFrame(animate)
+    return () => { if (animRef.current) cancelAnimationFrame(animRef.current) }
+  }, [data])
+
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <LineChart data={displayData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#EDD9BE" vertical={false} />
+        <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#402814', opacity: 0.6 }} axisLine={false} tickLine={false} />
+        <YAxis tick={{ fontSize: 10, fill: '#402814', opacity: 0.6 }} axisLine={false} tickLine={false} tickFormatter={v => v >= 1000 ? `${Math.round(v / 1000)}k` : Math.round(v)} />
+        <Tooltip
+          formatter={(value) => [formatCurrency(value), 'Revenue']}
+          contentStyle={{ background: '#fff', border: 'none', borderRadius: 16, boxShadow: '0 4px 32px rgba(13,12,0,0.1)', fontSize: 12 }}
+        />
+        <Line
+          type="monotone"
+          dataKey="revenue"
+          stroke="#400106"
+          strokeWidth={2.5}
+          dot={false}
+          activeDot={{ r: 5, fill: '#400106' }}
+          isAnimationActive={false}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  )
+}
+
 export default function Dashboard() {
   const today = new Date()
   const [calYear, setCalYear] = useState(today.getFullYear())
   const [calMonth, setCalMonth] = useState(today.getMonth())
   const [openPODates, setOpenPODates] = useState([])
-  const [chartView, setChartView] = useState('month') // 'month' | 'year'
+  const [chartView, setChartView] = useState('month')
   const [chartData, setChartData] = useState([])
   const [stats, setStats] = useState({ orders: 0, revenue: 0 })
   const [recentOrders, setRecentOrders] = useState([])
   const [fabOpen, setFabOpen] = useState(false)
-  const [addModal, setAddModal] = useState(null) // 'order' | 'expense'
+  const [addModal, setAddModal] = useState(null)
   const [loading, setLoading] = useState(true)
+  // PO confirmation popup
+  const [poConfirm, setPoConfirm] = useState(null) // { dateStr, isOpen }
 
   useEffect(() => { fetchData() }, [])
 
@@ -31,14 +84,16 @@ export default function Dashboard() {
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString()
 
     const [ordersRes, recentRes, poRes] = await Promise.all([
-      supabase.from('orders').select('total_price, shipping_fee, created_at').gte('created_at', monthStart).lte('created_at', monthEnd),
-      supabase.from('orders').select('id, customer_name, quantity, total_price, created_at, status').order('created_at', { ascending: false }).limit(3),
+      supabase.from('orders').select('total_price, shipping_fee, quantity, created_at').gte('created_at', monthStart).lte('created_at', monthEnd),
+      supabase.from('orders').select('id, customer_name, quantity, total_price, created_at, status').order('created_at', { ascending: false }).limit(5),
       supabase.from('open_po_dates').select('date'),
     ])
 
     const orders = ordersRes.data || []
     const revenue = orders.reduce((s, o) => s + (o.total_price - (o.shipping_fee || 0)), 0)
-    setStats({ orders: orders.length, revenue })
+    // stat = total pcs bought, not order count
+    const totalPcs = orders.reduce((s, o) => s + (o.quantity || 0), 0)
+    setStats({ orders: totalPcs, revenue })
     setRecentOrders(recentRes.data || [])
 
     const poDates = (poRes.data || []).map(d => d.date)
@@ -92,8 +147,16 @@ export default function Dashboard() {
   const firstDay = new Date(calYear, calMonth, 1).getDay()
   const daysInCal = new Date(calYear, calMonth + 1, 0).getDate()
 
-  async function togglePO(dateStr) {
-    if (openPODates.includes(dateStr)) {
+  function handleCalendarClick(dateStr) {
+    const isOpenPO = openPODates.includes(dateStr)
+    setPoConfirm({ dateStr, isOpen: isOpenPO })
+  }
+
+  async function confirmTogglePO() {
+    if (!poConfirm) return
+    const { dateStr, isOpen } = poConfirm
+    setPoConfirm(null)
+    if (isOpen) {
       await supabase.from('open_po_dates').delete().eq('date', dateStr)
       setOpenPODates(prev => prev.filter(d => d !== dateStr))
     } else {
@@ -126,9 +189,9 @@ export default function Dashboard() {
         <div className="card">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-xs text-cocoa/60 font-medium uppercase tracking-wider">Orders This Month</p>
+              <p className="text-xs text-cocoa/60 font-medium uppercase tracking-wider">Pcs Sold This Month</p>
               <p className="text-3xl font-bold text-olive mt-2">{stats.orders}</p>
-              <p className="text-xs text-cocoa/50 mt-1">orders</p>
+              <p className="text-xs text-cocoa/50 mt-1">pcs</p>
             </div>
             <div className="w-10 h-10 bg-cream-lighter rounded-2xl flex items-center justify-center">
               <ShoppingBag size={18} className="text-burgundy" />
@@ -158,18 +221,7 @@ export default function Dashboard() {
             <button onClick={() => handleChartView('year')} className={`pill-tab text-xs ${chartView === 'year' ? 'pill-tab-active' : 'pill-tab-inactive'}`}>This Year</button>
           </div>
         </div>
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#EDD9BE" vertical={false} />
-            <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#402814', opacity: 0.6 }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 10, fill: '#402814', opacity: 0.6 }} axisLine={false} tickLine={false} tickFormatter={v => v >= 1000 ? `${v / 1000}k` : v} />
-            <Tooltip
-              formatter={(value) => [formatCurrency(value), 'Revenue']}
-              contentStyle={{ background: '#fff', border: 'none', borderRadius: 16, boxShadow: '0 4px 32px rgba(13,12,0,0.1)', fontSize: 12 }}
-            />
-            <Line type="monotone" dataKey="revenue" stroke="#400106" strokeWidth={2.5} dot={false} activeDot={{ r: 5, fill: '#400106' }} />
-          </LineChart>
-        </ResponsiveContainer>
+        <AnimatedLine data={chartData} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -188,12 +240,10 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Day headers */}
           <div className="grid grid-cols-7 mb-2">
             {DAYS.map(d => <div key={d} className="text-center text-xs text-cocoa/50 font-medium py-1">{d}</div>)}
           </div>
 
-          {/* Calendar grid */}
           <div className="grid grid-cols-7 gap-1">
             {Array.from({ length: firstDay }).map((_, i) => <div key={`empty-${i}`} />)}
             {Array.from({ length: daysInCal }).map((_, i) => {
@@ -204,7 +254,7 @@ export default function Dashboard() {
               return (
                 <button
                   key={day}
-                  onClick={() => togglePO(dateStr)}
+                  onClick={() => handleCalendarClick(dateStr)}
                   className={`
                     aspect-square flex items-center justify-center text-xs rounded-xl font-medium transition-all duration-150
                     ${isOpenPO ? 'bg-burgundy text-cream-lighter' : isToday ? 'bg-cream text-olive ring-2 ring-burgundy/30' : 'hover:bg-cream-lighter text-olive/70'}
@@ -271,6 +321,42 @@ export default function Dashboard() {
           type={addModal}
           onClose={() => { setAddModal(null); fetchData() }}
         />
+      )}
+
+      {/* PO Confirmation Dialog */}
+      {poConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-olive/50 backdrop-blur-sm" onClick={() => setPoConfirm(null)} />
+          <div className="relative w-full max-w-sm bg-white rounded-3xl shadow-float">
+            <div className="px-6 pt-6 pb-5">
+              <div className="w-12 h-12 bg-burgundy/10 rounded-2xl flex items-center justify-center mb-4">
+                <span className="text-2xl">📅</span>
+              </div>
+              <h3 className="font-bold text-olive text-base">
+                {poConfirm.isOpen ? 'Tutup Open PO?' : 'Buka Open PO?'}
+              </h3>
+              <p className="text-sm text-cocoa/60 mt-1.5 leading-relaxed">
+                {poConfirm.isOpen
+                  ? `Hapus tanggal ${new Date(poConfirm.dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })} dari jadwal Open PO?`
+                  : `Tandai ${new Date(poConfirm.dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })} sebagai hari Open PO?`
+                }
+              </p>
+            </div>
+            <div className="flex gap-3 px-6 pb-6">
+              <button onClick={() => setPoConfirm(null)} className="btn-secondary flex-1">Batal</button>
+              <button
+                onClick={confirmTogglePO}
+                className={`flex-1 px-5 py-2.5 rounded-full font-semibold text-sm transition-all duration-200 active:scale-95 ${
+                  poConfirm.isOpen
+                    ? 'bg-red-500 hover:bg-red-600 text-white'
+                    : 'bg-burgundy hover:bg-burgundy-light text-cream-lighter'
+                }`}
+              >
+                {poConfirm.isOpen ? 'Hapus' : 'Tandai'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

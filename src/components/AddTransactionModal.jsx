@@ -3,6 +3,7 @@ import Modal from './Modal'
 import Select from './Select'
 import { supabase } from '../lib/supabase'
 import { formatCurrency } from '../lib/export'
+import { Calendar } from 'lucide-react'
 
 const PAYMENT_OPTIONS = [
   { value: 'cash', label: 'Cash' },
@@ -12,6 +13,92 @@ const STATUS_OPTIONS = [
   { value: 'process', label: 'In Progress' },
   { value: 'done', label: 'Done' },
 ]
+
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const DAYS_SHORT = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+
+function DatePickerCalendar({ value, onChange }) {
+  const [open, setOpen] = useState(false)
+  const today = new Date()
+  const [calYear, setCalYear] = useState(today.getFullYear())
+  const [calMonth, setCalMonth] = useState(today.getMonth())
+
+  const firstDay = new Date(calYear, calMonth, 1).getDay()
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate()
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+  const displayValue = value
+    ? new Date(value).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+    : ''
+
+  function prevMonth() {
+    if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1) }
+    else setCalMonth(m => m - 1)
+  }
+  function nextMonth() {
+    if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1) }
+    else setCalMonth(m => m + 1)
+  }
+  function selectDay(day) {
+    const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    onChange(dateStr)
+    setOpen(false)
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full bg-cream-lighter border border-cream rounded-2xl px-4 py-2.5 text-sm text-olive outline-none focus:ring-2 focus:ring-burgundy/20 focus:border-burgundy/40 transition-all duration-200 flex items-center justify-between gap-2 text-left"
+      >
+        <span className={value ? 'text-olive' : 'text-cream-dark'}>
+          {displayValue || 'Pilih tanggal (opsional)'}
+        </span>
+        <Calendar size={14} className="text-cocoa/50 flex-shrink-0" />
+      </button>
+      {value && (
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          className="absolute right-10 top-1/2 -translate-y-1/2 text-cocoa/40 hover:text-cocoa text-xs px-1"
+        >✕</button>
+      )}
+
+      {open && (
+        <div className="absolute z-50 mt-1.5 bg-white rounded-2xl shadow-float border border-cream/60 p-3 w-64">
+          <div className="flex items-center justify-between mb-2">
+            <button onClick={prevMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-cream-lighter text-cocoa/60">‹</button>
+            <span className="text-xs font-semibold text-olive">{MONTHS_SHORT[calMonth]} {calYear}</span>
+            <button onClick={nextMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-cream-lighter text-cocoa/60">›</button>
+          </div>
+          <div className="grid grid-cols-7 mb-1">
+            {DAYS_SHORT.map(d => <div key={d} className="text-center text-[10px] text-cocoa/40 font-medium py-0.5">{d}</div>)}
+          </div>
+          <div className="grid grid-cols-7 gap-0.5">
+            {Array.from({ length: firstDay }).map((_, i) => <div key={`e-${i}`} />)}
+            {Array.from({ length: daysInMonth }).map((_, i) => {
+              const day = i + 1
+              const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+              const isSelected = value === dateStr
+              const isToday = dateStr === todayStr
+              return (
+                <button
+                  key={day}
+                  onClick={() => selectDay(day)}
+                  className={`aspect-square flex items-center justify-center text-[11px] rounded-lg font-medium transition-all
+                    ${isSelected ? 'bg-burgundy text-cream-lighter' : isToday ? 'bg-cream text-olive ring-1 ring-burgundy/30' : 'hover:bg-cream-lighter text-olive/70'}`}
+                >
+                  {day}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function AddTransactionModal({ type, onClose }) {
   const [products, setProducts] = useState([])
@@ -39,11 +126,11 @@ export default function AddTransactionModal({ type, onClose }) {
         setProducts(data || [])
         if (data?.length) setForm(f => ({ ...f, product_id: data[0].id }))
       })
+      // Fetch open PO dates for orders
+      supabase.from('open_po_dates').select('date').order('date', { ascending: true }).then(({ data }) => {
+        setOpenPODates((data || []).map(d => d.date))
+      })
     }
-    // Fetch open PO dates for dropdown
-    supabase.from('open_po_dates').select('date').order('date', { ascending: true }).then(({ data }) => {
-      setOpenPODates((data || []).map(d => d.date))
-    })
   }, [type])
 
   const selectedProduct = products.find(p => p.id === Number(form.product_id))
@@ -73,7 +160,6 @@ export default function AddTransactionModal({ type, onClose }) {
         notes: form.notes,
         status: form.status,
       }
-      // Kalau ada tanggal dipilih, override created_at
       if (form.order_date) {
         payload.created_at = new Date(form.order_date).toISOString()
       }
@@ -86,7 +172,7 @@ export default function AddTransactionModal({ type, onClose }) {
         notes: form.notes,
       }
       if (form.expense_date) {
-        payload.created_at = new Date(form.expense_date).toISOString()
+        payload.created_at = new Date(form.expense_date + 'T12:00:00').toISOString()
       }
       await supabase.from('expenses').insert(payload)
     }
@@ -214,12 +300,10 @@ export default function AddTransactionModal({ type, onClose }) {
           </div>
 
           <div>
-            <label className="text-xs font-semibold text-cocoa/60 mb-1.5 block">Tanggal Open PO</label>
-            <Select
+            <label className="text-xs font-semibold text-cocoa/60 mb-1.5 block">Tanggal Pengeluaran</label>
+            <DatePickerCalendar
               value={form.expense_date}
               onChange={v => set('expense_date', v)}
-              options={dateOptions}
-              placeholder="Pilih tanggal (opsional)"
             />
           </div>
 

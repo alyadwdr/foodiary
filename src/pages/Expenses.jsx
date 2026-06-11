@@ -1,29 +1,112 @@
 import { useState, useEffect } from 'react'
-import { Plus, Search, FileText, FileSpreadsheet, Pencil, Trash2 } from 'lucide-react'
+import { Plus, Search, FileText, FileSpreadsheet, Pencil, Trash2, Calendar } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { formatCurrency, formatDate, exportToPDF, exportToExcel } from '../lib/export'
 import Modal from '../components/Modal'
-import Select from '../components/Select'
 import ConfirmDialog from '../components/ConfirmDialog'
 
 const FILTERS = ['Today', 'This Month', 'This Year', 'All']
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const DAYS_SHORT = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+
+// Mini calendar date picker component
+function DatePickerCalendar({ value, onChange, label }) {
+  const [open, setOpen] = useState(false)
+  const today = new Date()
+  const [calYear, setCalYear] = useState(today.getFullYear())
+  const [calMonth, setCalMonth] = useState(today.getMonth())
+
+  const firstDay = new Date(calYear, calMonth, 1).getDay()
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate()
+
+  const displayValue = value
+    ? new Date(value).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+    : ''
+
+  function prevMonth() {
+    if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1) }
+    else setCalMonth(m => m - 1)
+  }
+  function nextMonth() {
+    if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1) }
+    else setCalMonth(m => m + 1)
+  }
+
+  function selectDay(day) {
+    const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    onChange(dateStr)
+    setOpen(false)
+  }
+
+  return (
+    <div className="relative">
+      <label className="text-xs font-semibold text-cocoa/60 mb-1.5 block">{label}</label>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="input-field flex items-center justify-between gap-2 text-left"
+      >
+        <span className={value ? 'text-olive' : 'text-cream-dark'}>
+          {displayValue || 'Pilih tanggal (opsional)'}
+        </span>
+        <Calendar size={14} className="text-cocoa/50 flex-shrink-0" />
+      </button>
+      {value && (
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          className="absolute right-10 top-[38px] text-cocoa/40 hover:text-cocoa text-xs px-1"
+        >✕</button>
+      )}
+
+      {open && (
+        <div className="absolute z-50 mt-1.5 bg-white rounded-2xl shadow-float border border-cream/60 p-3 w-64">
+          {/* Month navigation */}
+          <div className="flex items-center justify-between mb-2">
+            <button onClick={prevMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-cream-lighter text-cocoa/60">‹</button>
+            <span className="text-xs font-semibold text-olive">{MONTHS_SHORT[calMonth]} {calYear}</span>
+            <button onClick={nextMonth} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-cream-lighter text-cocoa/60">›</button>
+          </div>
+          {/* Day headers */}
+          <div className="grid grid-cols-7 mb-1">
+            {DAYS_SHORT.map(d => <div key={d} className="text-center text-[10px] text-cocoa/40 font-medium py-0.5">{d}</div>)}
+          </div>
+          {/* Days */}
+          <div className="grid grid-cols-7 gap-0.5">
+            {Array.from({ length: firstDay }).map((_, i) => <div key={`e-${i}`} />)}
+            {Array.from({ length: daysInMonth }).map((_, i) => {
+              const day = i + 1
+              const dateStr = `${calYear}-${String(calMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+              const isSelected = value === dateStr
+              const isToday = dateStr === `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+              return (
+                <button
+                  key={day}
+                  onClick={() => selectDay(day)}
+                  className={`aspect-square flex items-center justify-center text-[11px] rounded-lg font-medium transition-all
+                    ${isSelected ? 'bg-burgundy text-cream-lighter' : isToday ? 'bg-cream text-olive ring-1 ring-burgundy/30' : 'hover:bg-cream-lighter text-olive/70'}`}
+                >
+                  {day}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function Expenses() {
   const [expenses, setExpenses] = useState([])
-  const [openPODates, setOpenPODates] = useState([])
-  const [filter, setFilter] = useState('Today')
+  const [filter, setFilter] = useState('All')
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState(null)
   const [confirmId, setConfirmId] = useState(null)
   const [form, setForm] = useState({ name: '', amount: 1, price: '', notes: '', expense_date: '' })
   const [loading, setLoading] = useState(false)
 
-  useEffect(() => { fetchExpenses(); fetchOpenPO() }, [filter])
-
-  async function fetchOpenPO() {
-    const { data } = await supabase.from('open_po_dates').select('date').order('date', { ascending: true })
-    setOpenPODates((data || []).map(d => d.date))
-  }
+  useEffect(() => { fetchExpenses() }, [filter])
 
   async function fetchExpenses() {
     setLoading(true)
@@ -50,11 +133,6 @@ export default function Expenses() {
   const filtered = expenses.filter(e => e.name?.toLowerCase().includes(search.toLowerCase()))
   const totalExpenses = filtered.reduce((s, e) => s + (e.price || 0), 0)
 
-  const dateOptions = openPODates.map(d => ({
-    value: d,
-    label: new Date(d).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' }),
-  }))
-
   function openAdd() {
     setForm({ name: '', amount: 1, price: '', notes: '', expense_date: '' })
     setModal('add')
@@ -73,7 +151,7 @@ export default function Expenses() {
       notes: form.notes,
     }
     if (modal === 'add' && form.expense_date) {
-      payload.created_at = new Date(form.expense_date).toISOString()
+      payload.created_at = new Date(form.expense_date + 'T12:00:00').toISOString()
     }
     if (modal === 'add') await supabase.from('expenses').insert(payload)
     else await supabase.from('expenses').update(payload).eq('id', modal.id)
@@ -139,15 +217,29 @@ export default function Expenses() {
       </div>
 
       <div className="card space-y-4">
-        <div className="flex flex-col sm:flex-row gap-3">
-          <div className="flex bg-cream-lighter rounded-full p-0.5 self-start">
-            {FILTERS.map(f => (
-              <button key={f} onClick={() => setFilter(f)} className={`pill-tab text-xs ${filter === f ? 'pill-tab-active' : 'pill-tab-inactive'}`}>{f}</button>
-            ))}
-          </div>
-          <div className="relative flex-1 sm:max-w-xs">
-            <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-cocoa/40" />
-            <input className="input-field !pl-9" placeholder="Search expense..." value={search} onChange={e => setSearch(e.target.value)} />
+        {/* Filters + search + total inline */}
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+            <div className="flex bg-cream-lighter rounded-full p-0.5 self-start flex-shrink-0">
+              {FILTERS.map(f => (
+                <button key={f} onClick={() => setFilter(f)} className={`pill-tab text-xs ${filter === f ? 'pill-tab-active' : 'pill-tab-inactive'}`}>{f}</button>
+              ))}
+            </div>
+            <div className="relative flex-1 sm:max-w-xs">
+              <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-cocoa/40" />
+              <input className="input-field !pl-9" placeholder="Search expense..." value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+            {/* Total inline */}
+            <div className="flex gap-2 sm:ml-auto">
+              <div className="bg-cream-lighter rounded-xl px-3 py-1.5">
+                <p className="text-xs text-cocoa/60">Items</p>
+                <p className="font-bold text-olive text-sm">{filtered.length}</p>
+              </div>
+              <div className="bg-burgundy rounded-xl px-3 py-1.5">
+                <p className="text-xs text-cream/60">Total</p>
+                <p className="font-bold text-cream-lighter text-sm">{formatCurrency(totalExpenses)}</p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -192,13 +284,6 @@ export default function Expenses() {
             </tbody>
           </table>
         </div>
-
-        <div className="flex gap-4 pt-3 border-t border-cream/60">
-          <div className="bg-burgundy rounded-2xl px-4 py-2.5">
-            <p className="text-xs text-cream/60">Total Expenses</p>
-            <p className="font-bold text-cream-lighter">{formatCurrency(totalExpenses)}</p>
-          </div>
-        </div>
       </div>
 
       {/* Add/Edit Modal */}
@@ -210,15 +295,11 @@ export default function Expenses() {
           </div>
 
           {modal === 'add' && (
-            <div>
-              <label className="text-xs font-semibold text-cocoa/60 mb-1.5 block">Tanggal Open PO</label>
-              <Select
-                value={form.expense_date}
-                onChange={v => set('expense_date', v)}
-                options={dateOptions}
-                placeholder="Pilih tanggal (opsional)"
-              />
-            </div>
+            <DatePickerCalendar
+              label="Tanggal Pengeluaran"
+              value={form.expense_date}
+              onChange={v => set('expense_date', v)}
+            />
           )}
 
           <div className="grid grid-cols-2 gap-3">

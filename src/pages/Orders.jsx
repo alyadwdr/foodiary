@@ -14,7 +14,7 @@ export default function Orders() {
   const [orders, setOrders] = useState([])
   const [products, setProducts] = useState([])
   const [openPODates, setOpenPODates] = useState([])
-  const [filter, setFilter] = useState('Today')
+  const [filter, setFilter] = useState('All')
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState(null)
   const [confirmId, setConfirmId] = useState(null)
@@ -58,6 +58,12 @@ export default function Orders() {
     const { data } = await query
     setOrders(data || [])
     setLoading(false)
+  }
+
+  // Inline update for payment_method or status
+  async function handleInlineUpdate(orderId, field, value) {
+    await supabase.from('orders').update({ [field]: value }).eq('id', orderId)
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, [field]: value } : o))
   }
 
   const filtered = orders.filter(o => o.customer_name?.toLowerCase().includes(search.toLowerCase()))
@@ -165,6 +171,18 @@ export default function Orders() {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
+  // Compact inline select styles
+  const inlineSelectStyle = {
+    payment: {
+      cash: 'bg-blue-50 text-blue-700',
+      tf: 'bg-purple-50 text-purple-700',
+    },
+    status: {
+      done: 'bg-emerald-50 text-emerald-700',
+      process: 'bg-amber-50 text-amber-700',
+    }
+  }
+
   return (
     <div className="p-4 lg:p-8 space-y-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between">
@@ -183,15 +201,33 @@ export default function Orders() {
       </div>
 
       <div className="card space-y-4">
-        <div className="flex flex-col sm:flex-row gap-3">
-          <div className="flex bg-cream-lighter rounded-full p-0.5 self-start">
-            {FILTERS.map(f => (
-              <button key={f} onClick={() => setFilter(f)} className={`pill-tab text-xs ${filter === f ? 'pill-tab-active' : 'pill-tab-inactive'}`}>{f}</button>
-            ))}
-          </div>
-          <div className="relative flex-1 sm:max-w-xs">
-            <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-cocoa/40" />
-            <input className="input-field !pl-9" placeholder="Search customer..." value={search} onChange={e => setSearch(e.target.value)} />
+        {/* Filters + search + totals */}
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+            <div className="flex bg-cream-lighter rounded-full p-0.5 self-start flex-shrink-0">
+              {FILTERS.map(f => (
+                <button key={f} onClick={() => setFilter(f)} className={`pill-tab text-xs ${filter === f ? 'pill-tab-active' : 'pill-tab-inactive'}`}>{f}</button>
+              ))}
+            </div>
+            <div className="relative flex-1 sm:max-w-xs">
+              <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-cocoa/40" />
+              <input className="input-field !pl-9" placeholder="Search customer..." value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+            {/* Totals inline */}
+            <div className="flex flex-wrap gap-2 sm:ml-auto">
+              <div className="bg-cream-lighter rounded-xl px-3 py-1.5">
+                <p className="text-xs text-cocoa/60">Orders</p>
+                <p className="font-bold text-olive text-sm">{totalOrders}</p>
+              </div>
+              <div className="bg-cream-lighter rounded-xl px-3 py-1.5">
+                <p className="text-xs text-cocoa/60">Shipping</p>
+                <p className="font-bold text-olive text-sm">{formatCurrency(totalShipping)}</p>
+              </div>
+              <div className="bg-burgundy rounded-xl px-3 py-1.5">
+                <p className="text-xs text-cream/60">Revenue</p>
+                <p className="font-bold text-cream-lighter text-sm">{formatCurrency(totalRevenue)}</p>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -223,15 +259,31 @@ export default function Orders() {
                   <td className="table-cell font-semibold text-olive">{order.customer_name}</td>
                   <td className="table-cell">{order.quantity}</td>
                   <td className="table-cell font-semibold text-burgundy whitespace-nowrap">{formatCurrency(order.total_price)}</td>
+                  {/* Inline payment dropdown */}
                   <td className="table-cell">
-                    <span className="px-2.5 py-1 bg-cream-lighter rounded-full text-xs font-medium text-cocoa capitalize">{order.payment_method}</span>
+                    <select
+                      value={order.payment_method}
+                      onChange={e => handleInlineUpdate(order.id, 'payment_method', e.target.value)}
+                      className={`text-xs font-medium px-2.5 py-1 rounded-full border-0 outline-none cursor-pointer ${inlineSelectStyle.payment[order.payment_method] || 'bg-cream-lighter text-cocoa'}`}
+                    >
+                      {PAYMENT_OPTIONS.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
                   </td>
                   <td className="table-cell">{formatCurrency(order.shipping_fee)}</td>
                   <td className="table-cell text-cocoa/60 max-w-[120px] truncate">{order.notes || '-'}</td>
+                  {/* Inline status dropdown */}
                   <td className="table-cell">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${order.status === 'done' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                      {order.status === 'done' ? 'Done' : 'In Progress'}
-                    </span>
+                    <select
+                      value={order.status}
+                      onChange={e => handleInlineUpdate(order.id, 'status', e.target.value)}
+                      className={`text-xs font-medium px-2.5 py-1 rounded-full border-0 outline-none cursor-pointer ${inlineSelectStyle.status[order.status] || 'bg-cream-lighter text-cocoa'}`}
+                    >
+                      {STATUS_OPTIONS.map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
                   </td>
                   <td className="table-cell">
                     <div className="flex gap-1.5">
@@ -247,21 +299,6 @@ export default function Orders() {
               ))}
             </tbody>
           </table>
-        </div>
-
-        <div className="flex flex-wrap gap-4 pt-3 border-t border-cream/60">
-          <div className="bg-cream-lighter rounded-2xl px-4 py-2.5">
-            <p className="text-xs text-cocoa/60">Total Orders</p>
-            <p className="font-bold text-olive">{totalOrders}</p>
-          </div>
-          <div className="bg-cream-lighter rounded-2xl px-4 py-2.5">
-            <p className="text-xs text-cocoa/60">Total Shipping</p>
-            <p className="font-bold text-olive">{formatCurrency(totalShipping)}</p>
-          </div>
-          <div className="bg-burgundy rounded-2xl px-4 py-2.5">
-            <p className="text-xs text-cream/60">Total Revenue</p>
-            <p className="font-bold text-cream-lighter">{formatCurrency(totalRevenue)}</p>
-          </div>
         </div>
       </div>
 
