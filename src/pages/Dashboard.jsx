@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus, TrendingUp, ShoppingBag, Receipt, ChevronLeft, ChevronRight, Calendar } from 'lucide-react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -12,63 +12,11 @@ import AddTransactionModal from '../components/AddTransactionModal'
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-// Smooth animated line chart using CSS transition approach
-function AnimatedLine({ data }) {
-  const prevDataRef = useRef([])
-  const [displayData, setDisplayData] = useState([])
-  const rafRef = useRef(null)
-  const startRef = useRef(null)
-  const fromRef = useRef([])
-  const toRef = useRef([])
-  const DURATION = 900
-
-  useEffect(() => {
-    if (!data || data.length === 0) return
-
-    // Cancel any in-progress animation
-    if (rafRef.current) cancelAnimationFrame(rafRef.current)
-
-    // Start from previous display values (or zero if first render)
-    const from = data.map((d, i) => ({
-      ...d,
-      revenue: (prevDataRef.current[i]?.revenue) ?? 0,
-    }))
-    fromRef.current = from
-    toRef.current = data
-    startRef.current = null
-
-    function easeOutCubic(t) {
-      return 1 - Math.pow(1 - t, 3)
-    }
-
-    function animate(ts) {
-      if (!startRef.current) startRef.current = ts
-      const elapsed = ts - startRef.current
-      const raw = Math.min(elapsed / DURATION, 1)
-      const progress = easeOutCubic(raw)
-
-      const next = toRef.current.map((d, i) => ({
-        ...d,
-        revenue: (fromRef.current[i]?.revenue ?? 0) + (d.revenue - (fromRef.current[i]?.revenue ?? 0)) * progress,
-      }))
-      setDisplayData(next)
-
-      if (raw < 1) {
-        rafRef.current = requestAnimationFrame(animate)
-      } else {
-        prevDataRef.current = data
-      }
-    }
-
-    rafRef.current = requestAnimationFrame(animate)
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
-  }, [data])
-
-  if (!displayData.length) return null
-
+function RevenueChart({ data }) {
+  if (!data.length) return null
   return (
     <ResponsiveContainer width="100%" height={200}>
-      <LineChart data={displayData} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+      <LineChart data={data} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#EDD9BE" vertical={false} />
         <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#402814', opacity: 0.6 }} axisLine={false} tickLine={false} />
         <YAxis tick={{ fontSize: 10, fill: '#402814', opacity: 0.6 }} axisLine={false} tickLine={false} tickFormatter={v => v >= 1000 ? `${Math.round(v / 1000)}k` : Math.round(v)} />
@@ -246,7 +194,7 @@ export default function Dashboard() {
             <button onClick={() => handleChartView('year')} className={`pill-tab text-xs ${chartView === 'year' ? 'pill-tab-active' : 'pill-tab-inactive'}`}>This Year</button>
           </div>
         </div>
-        <AnimatedLine data={chartData} />
+        <RevenueChart data={chartData} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
